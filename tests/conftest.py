@@ -113,6 +113,18 @@ def sbomber_post_mock(project: Path):
         yield mm
 
 
+@pytest.fixture
+def sbomber_post_error_mock(project: Path):
+    def get_mm(*args, **kwargs):
+        mm = MagicMock()
+        mm.status_code = 500
+        mm.text = "internal error"
+        return mm
+
+    with patch("requests.post", side_effect=get_mm) as mm:
+        yield mm
+
+
 @pytest.fixture(autouse=True)
 def secscanner_run_mock(project: Path):
     def get_mm(*args, **kwargs):

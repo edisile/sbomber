@@ -9,6 +9,7 @@ import typing
 from collections import namedtuple
 from io import BufferedReader
 from pathlib import Path
+from time import sleep
 from typing import Dict, Optional, Union
 
 import requests
@@ -33,6 +34,7 @@ WHEEL_FILENAME = (
     r"^(?P<distribution>.+?)-(?P<version>.+?)(?:-[^-.]+)*-"
     r"(?P<python_tag>.+?)-(?P<abi_tag>.+?)-(?P<platform_tag>.+?)\.whl$"
 )
+MAX_RETRIES = 4
 
 Chunk = namedtuple("Chunk", ["index", "size", "read"])
 
@@ -149,25 +151,29 @@ class SBOMber(Client):
             f"{total_chunks}"
         )
 
-        with open(file_path, "rb") as file:
-            for i in range(1, total_chunks + 1):
-                chunk = file.read(CHUNK_SIZE)
-                # the final chunk may be smaller
-                current_chunk_size = len(chunk)
+        def _upload_chunk(chunk: bytes, i: int, retry: int = 0):
+            current_chunk_size = len(chunk)
+            files = {"file": (file_name, chunk, "application/octet-stream")}
 
-                files = {"file": (file_name, chunk, "application/octet-stream")}
+            data = {
+                "resumableChunkNumber": str(i),
+                "resumableChunkSize": str(CHUNK_SIZE),
+                "resumableCurrentChunkSize": str(current_chunk_size),
+                "resumableTotalSize": str(file_size),
+                "resumableType": mimetype,
+                "resumableIdentifier": f"{file_name}-{i}",
+                "resumableFilename": file_name,
+                "resumableTotalChunks": str(total_chunks),
+            }
 
-                data = {
-                    "resumableChunkNumber": str(i),
-                    "resumableChunkSize": str(CHUNK_SIZE),
-                    "resumableCurrentChunkSize": str(current_chunk_size),
-                    "resumableTotalSize": str(file_size),
-                    "resumableType": mimetype,
-                    "resumableIdentifier": f"{file_name}-{i}",
-                    "resumableFilename": file_name,
-                    "resumableTotalChunks": str(total_chunks),
-                }
+            if retry > 0:
+                logger.debug(
+                    f"Artifact {token}: Chunk {i}/{total_chunks}, retry {retry}; "
+                    f"backing off before request"
+                )
+                sleep(0.5 * 2**retry)  # exponential backoff
 
+            try:
                 response = requests.post(
                     f"{self._service_url}/api/v1/artifacts/upload/chunk/{token}",
                     files=files,
@@ -180,9 +186,18 @@ class SBOMber(Client):
                         f"Response: {response.text}"
                     )
 
+                self._verify_chunk_upload(token, i)
+            except Exception as e:
+                if retry >= MAX_RETRIES:
+                    raise e
+                logger.debug(f"{e}\nWill retry")
+                _upload_chunk(chunk, i, retry + 1)
+
+        with open(file_path, "rb") as file:
+            for i in list(range(1, total_chunks + 1)):
+                _upload_chunk(file.read(CHUNK_SIZE), i)
                 logger.debug(f"Artifact {token}: Chunk {i}/{total_chunks} uploaded")
                 print("." if i % 10 != 0 else i, end="", flush=True)
-                self._verify_chunk_upload(token, i)
 
         print()  # newline after the dots
         return total_chunks
