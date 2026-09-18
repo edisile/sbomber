@@ -64,7 +64,7 @@ def _download_cmd(bin: str, artifact: Artifact, item: Optional[str] = None):
 
 
 def _prepare_oci_charm_resource(artifact: Artifact) -> str:
-    """Retrieve the info for a charm resource and the OCI registry credentials to download it"""
+    """Retrieve the info for a charm resource and the OCI registry credentials to download it."""
     charm = artifact.charm
     channel = artifact.channel
     version = artifact.version
