@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import yaml
 
+from clients.sbom import MAX_RETRIES, SBOMber
 from sbomber import (
     DEFAULT_PACKAGE_DIR,
     DEFAULT_REPORTS_DIR,
@@ -684,3 +685,25 @@ def test_prepare_oci_charm_resource_rejects_non_oci_resource_type(project):
 
     assert get_mock.call_count == 1
     assert not run_mock.called
+
+
+def test_chunked_upload_retries_until_max_retries(project, sbomber_post_error_mock):
+    """Chunk upload retries failures up to MAX_RETRIES, then raises."""
+    client = SBOMber(
+        department="department",
+        team="team",
+        email="test@example.com",
+        service_url="https://sbom-request.canonical.com",
+    )
+    file_path = project / "artifact.rock"
+    file_path.write_bytes(b"boom")
+
+    with patch("clients.sbom.sleep") as sleep_mock:
+        with pytest.raises(Exception, match="Failed to upload chunk"):
+            client._chunked_upload(file_path, token="sbom-token")
+
+    # 1 initial request + MAX_RETRIES retries
+    assert sbomber_post_error_mock.call_count == 1 + MAX_RETRIES
+
+    # only sleeps before retry attempts
+    assert sleep_mock.call_count == MAX_RETRIES
